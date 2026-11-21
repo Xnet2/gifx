@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GifX – ממיר וידאו ל-GIF</title>
+<meta name="description" content="ממיר וידאו ל-GIF באיכות גבוהה. עובד בדפדפן, בלי העלאה לשרת ובלי אינטרנט.">
+<meta name="theme-color" content="#7c3aed">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c3aed'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='900' font-size='24' text-anchor='middle' fill='white'%3EGIF%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">Gif<b>X</b></span>
+    <span class="tag">ממיר וידאו ל-GIF באיכות גבוהה · הכל נעשה במחשב שלך, בלי העלאה</span>
+  </div>
+</header>
+
+<main>
+  <!-- ======================= pick a file ======================= -->
+  <section id="drop" class="drop">
+    <input type="file" id="file" accept="video/*,.mkv,.mov,.avi" hidden>
+    <div class="drop-inner">
+      <svg class="drop-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="10" width="38" height="28" rx="5" fill="none" stroke="currentColor" stroke-width="3"/><path d="M20 18v12l10-6z" fill="currentColor"/></svg>
+      <h1>גוררים לכאן סרטון</h1>
+      <p>או</p>
+      <button class="btn primary" id="pick" type="button">בחירת קובץ</button>
+      <p class="hint">MP4, WebM, MOV ועוד – כל מה שהדפדפן מנגן · אפשר גם להדביק עם Ctrl+V</p>
+    </div>
+  </section>
+
+  <!-- ======================= editor ======================= -->
+  <section id="editor" class="editor" hidden>
+    <div class="stage-col">
+      <div class="stage">
+        <div class="frame" id="frame" dir="ltr">
+          <video id="video" playsinline muted preload="auto"></video>
+          <div id="cropLayer" class="crop-layer">
+            <div id="cropBox" class="crop-box" hidden>
+              <i class="hd" data-h="nw"></i><i class="hd" data-h="ne"></i><i class="hd" data-h="sw"></i><i class="hd" data-h="se"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button class="icon-btn" id="play" type="button" title="ניגון / עצירה (רווח)" aria-label="ניגון">
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M8 5v14l11-7z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+        </button>
+        <div class="timeline" id="timeline" dir="ltr">
+          <div class="tl-track"></div>
+          <div class="tl-sel" id="tlSel"></div>
+          <div class="tl-handle" id="hStart" title="התחלה"></div>
+          <div class="tl-handle" id="hEnd" title="סוף"></div>
+          <div class="tl-head" id="tlHead"></div>
+        </div>
+        <span class="time" id="timeNow" dir="ltr">0:00.00</span>
+      </div>
+
+      <div class="row trim">
+        <label>התחלה <input type="number" id="start" step="0.01" min="0" dir="ltr"></label>
+        <button class="btn small" id="setStart" type="button">מהמיקום הנוכחי</button>
+        <span class="sep"></span>
+        <label>סוף <input type="number" id="end" step="0.01" min="0" dir="ltr"></label>
+        <button class="btn small" id="setEnd" type="button">מהמיקום הנוכחי</button>
+      </div>
+
+      <div class="row crop-tools">
+        <button class="btn small" id="cropBtn" type="button" aria-pressed="false">חיתוך תמונה</button>
+        <select id="aspect" aria-label="יחס חיתוך">
+          <option value="0">יחס חופשי</option>
+          <option value="1">1:1</option>
+          <option value="1.7778">16:9</option>
+          <option value="1.3333">4:3</option>
+          <option value="0.5625">9:16</option>
+        </select>
+        <button class="btn small ghost" id="cropReset" type="button">ביטול חיתוך</button>
+        <span class="muted" id="cropInfo"></span>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <div class="presets" role="group" aria-label="פרופיל">
+        <button type="button" class="chip" data-preset="max">איכות מרבית</button>
+        <button type="button" class="chip" data-preset="balanced">מאוזן</button>
+        <button type="button" class="chip" data-preset="small">קובץ קטן</button>
+      </div>
+
+      <div class="field">
+        <div class="f-head"><label for="width">רוחב</label><span class="val" id="sizeVal" dir="ltr"></span></div>
+        <div class="inline">
+          <input type="number" id="width" min="16" step="1" value="480" dir="ltr">
+          <div class="chips" id="widthChips">
+            <button type="button" class="chip" data-w="320">320</button>
+            <button type="button" class="chip" data-w="480">480</button>
+            <button type="button" class="chip" data-w="640">640</button>
+            <button type="button" class="chip" data-w="800">800</button>
+            <button type="button" class="chip" data-w="0">מקורי</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="f-head"><label for="fps">פריימים בשנייה</label><span class="val" id="fpsVal">20</span></div>
+        <input type="range" id="fps" min="5" max="50" step="1" value="20">
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="speed">מהירות</label>
+          <select id="speed">
+            <option value="0.25">x0.25</option>
+            <option value="0.5">x0.5</option>
+            <option value="0.75">x0.75</option>
+            <option value="1" selected>רגילה</option>
+            <option value="1.25">x1.25</option>
+            <option value="1.5">x1.5</option>
+            <option value="2">x2</option>
+            <option value="3">x3</option>
+            <option value="4">x4</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="direction">כיוון</label>
+          <select id="direction">
+            <option value="forward" selected>רגיל</option>
+            <option value="reverse">הפוך</option>
+            <option value="boomerang">בומרנג</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="adv" open>
+        <summary>צבעים ודחיסה</summary>
+
+        <div class="field">
+          <div class="f-head"><label for="colors">מספר צבעים</label><span class="val" id="colorsVal">256</span></div>
+          <input type="range" id="colors" min="2" max="256" step="1" value="256">
+        </div>
+
+        <div class="field">
+          <label for="palette">פלטת צבעים</label>
+          <select id="palette">
+            <option value="local" selected>נפרדת לכל פריים – איכות מרבית</option>
+            <option value="global">אחת לכל ה-GIF – בלי הבהובים, קובץ קטן יותר</option>
+          </select>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="dither">דיזרינג</label>
+            <select id="dither">
+              <option value="fs" selected>Floyd–Steinberg</option>
+              <option value="sierra">Sierra</option>
+              <option value="sierralite">Sierra Lite</option>
+              <option value="atkinson">Atkinson</option>
+              <option value="bayer">Bayer (יציב)</option>
+              <option value="none">בלי</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="f-head"><label for="strength">עוצמה</label><span class="val" id="strengthVal">85%</span></div>
+            <input type="range" id="strength" min="0" max="100" step="5" value="85">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="optimize">דחיסה בין פריימים</label>
+          <select id="optimize">
+            <option value="-1">כבויה – כל פריים מלא</option>
+            <option value="0">ללא איבוד – רק פיקסלים זהים</option>
+            <option value="3" selected>עדינה – כמעט בלי הבדל</option>
+            <option value="8">בינונית</option>
+            <option value="16">חזקה – קובץ קטן</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="loop">חזרות</label>
+          <select id="loop">
+            <option value="0" selected>בלי סוף</option>
+            <option value="1">פעם אחת</option>
+            <option value="2">2 פעמים</option>
+            <option value="3">3 פעמים</option>
+            <option value="5">5 פעמים</option>
+          </select>
+        </div>
+      </details>
+
+      <div class="summary" id="summary"></div>
+
+      <div id="actions" class="actions">
+        <button id="convert" class="btn primary big" type="button">המרה ל-GIF</button>
+        <button id="change" class="btn ghost" type="button">קובץ אחר</button>
+      </div>
+
+      <div id="progress" class="progress" hidden>
+        <div class="bar"><div class="fill" id="pFill"></div></div>
+        <div class="p-row"><span id="pText">מתחיל…</span><button class="btn small ghost" id="cancel" type="button">ביטול</button></div>
+      </div>
+      <p class="error" id="error" hidden></p>
+    </aside>
+  </section>
+
+  <!-- ======================= result ======================= -->
+  <section id="result" class="result" hidden>
+    <div class="result-img"><img id="gif" alt="ה-GIF שנוצר"></div>
+    <div class="result-info">
+      <h2>ה-GIF מוכן</h2>
+      <dl class="stats" id="stats"></dl>
+      <div class="actions">
+        <a class="btn primary big" id="download" download="animation.gif">הורדה</a>
+      </div>
+      <p class="muted small">רוצים קובץ קטן יותר? מקטינים רוחב או פריימים בשנייה, בוחרים "קובץ קטן" וממירים שוב.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  GifX · חינמי וקוד פתוח · <a href="https://github.com/Xnet2/gifx" target="_blank" rel="noopener">הקוד בגיטהאב</a>
+</footer>
+
+<script src="encoder.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
