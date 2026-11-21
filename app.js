@@ -664,6 +664,11 @@
   el.again.addEventListener('click', closeResult);
   el.result.addEventListener('click', (e) => { if (e.target === el.result) closeResult(); });
 
+  // עבודה בלי אינטרנט והתקנה כאפליקציה (רק כשהאתר נטען מהרשת, לא כקובץ מהמחשב)
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
   // לבדיקות אוטומטיות
   window.GifX = { loadFile, convert: () => convert().finally(endJob), state, readSettings };
 })();
