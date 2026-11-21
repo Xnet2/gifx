@@ -1,26 +1,28 @@
-/* GifX — UI, frame extraction and encoding pipeline. No dependencies. */
+/* GifX — ממשק, חילוץ פריימים והמרה. בלי ספריות חיצוניות. */
 'use strict';
 (() => {
   const $ = (s) => document.querySelector(s);
   const el = {
-    drop: $('#drop'), file: $('#file'), pick: $('#pick'), editor: $('#editor'),
+    drop: $('#drop'), file: $('#file'), pick: $('#pick'), editor: $('#editor'), change: $('#change'),
     video: $('#video'), frame: $('#frame'), cropLayer: $('#cropLayer'), cropBox: $('#cropBox'),
     play: $('#play'), timeline: $('#timeline'), tlSel: $('#tlSel'), hStart: $('#hStart'), hEnd: $('#hEnd'),
-    tlHead: $('#tlHead'), timeNow: $('#timeNow'), start: $('#start'), end: $('#end'),
-    setStart: $('#setStart'), setEnd: $('#setEnd'), cropBtn: $('#cropBtn'), aspect: $('#aspect'),
+    tlHead: $('#tlHead'), startText: $('#startText'), endText: $('#endText'), lenText: $('#lenText'),
+    setStart: $('#setStart'), setEnd: $('#setEnd'),
+    cropBtn: $('#cropBtn'), cropBtnText: $('#cropBtnText'), cropOpts: $('#cropOpts'), aspect: $('#aspect'),
     cropReset: $('#cropReset'), cropInfo: $('#cropInfo'),
-    width: $('#width'), widthChips: $('#widthChips'), sizeVal: $('#sizeVal'),
-    fps: $('#fps'), fpsVal: $('#fpsVal'), speed: $('#speed'), direction: $('#direction'),
+    sizeSeg: $('#sizeSeg'), fpsSeg: $('#fpsSeg'), qualitySeg: $('#qualitySeg'), origW: $('#origW'),
+    width: $('#width'), fps: $('#fps'), fpsVal: $('#fpsVal'), speed: $('#speed'), direction: $('#direction'),
     colors: $('#colors'), colorsVal: $('#colorsVal'), palette: $('#palette'), dither: $('#dither'),
     strength: $('#strength'), strengthVal: $('#strengthVal'), optimize: $('#optimize'), loop: $('#loop'),
-    summary: $('#summary'), actions: $('#actions'), convert: $('#convert'), change: $('#change'),
+    summary: $('#summary'), actions: $('#actions'), convert: $('#convert'),
     progress: $('#progress'), pFill: $('#pFill'), pText: $('#pText'), cancel: $('#cancel'), error: $('#error'),
     result: $('#result'), gif: $('#gif'), stats: $('#stats'), download: $('#download'),
+    closeResult: $('#closeResult'), again: $('#again'),
   };
 
   const state = {
     file: null, url: null, duration: 0, vw: 0, vh: 0,
-    start: 0, end: 0, crop: null, cropMode: false, job: null, gifUrl: null,
+    start: 0, end: 0, crop: null, cropMode: false, aspect: 0, job: null, gifUrl: null,
   };
 
   const PRESETS = {
@@ -29,13 +31,17 @@
     small: { colors: 128, palette: 'global', dither: 'bayer', strength: 70, optimize: '16' },
   };
 
-  // ------------------------------------------------------------------ helpers
+  // ------------------------------------------------------------------ עזרים
   const fmtTime = (t) => {
     if (!isFinite(t)) t = 0;
     const m = Math.floor(t / 60), s = t - m * 60;
-    return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+    return `${m}:${s.toFixed(1).padStart(4, '0')}`;
   };
-  const fmtBytes = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(2)} MB`;
+  const fmtSecs = (t) => {
+    const r = Math.round(t * 10) / 10;
+    return r === 1 ? 'שנייה אחת' : `${r} שניות`;
+  };
+  const fmtBytes = (b) => b < 1024 ? `${b} בתים` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const once = (target, ev) => new Promise((res) => target.addEventListener(ev, res, { once: true }));
 
@@ -44,7 +50,7 @@
     el.error.hidden = !msg;
   }
 
-  // ------------------------------------------------------------------ loading
+  // ------------------------------------------------------------------ טעינת סרטון
   el.pick.addEventListener('click', () => el.file.click());
   el.change.addEventListener('click', () => el.file.click());
   el.file.addEventListener('change', () => { if (el.file.files[0]) loadFile(el.file.files[0]); el.file.value = ''; });
@@ -64,12 +70,14 @@
     if (f) loadFile(f);
   });
 
-  // Recorded WebM files often report duration = Infinity until the end is reached.
+  // קבצי WebM מוקלטים מדווחים לפעמים על אורך אינסופי עד שמגיעים לסוף
   async function fixDuration(v) {
     if (isFinite(v.duration) && v.duration > 0) return;
+    // קופצים לסוף ומחכים שהקפיצה תסתיים – רק אז האורך האמיתי ידוע
+    const seeked = once(v, 'seeked');
     v.currentTime = 1e101;
-    await once(v, 'durationchange');
-    for (let i = 0; i < 50 && !isFinite(v.duration); i++) await new Promise((r) => setTimeout(r, 20));
+    await Promise.race([seeked, new Promise((r) => setTimeout(r, 5000))]);
+    for (let i = 0; i < 100 && !(isFinite(v.duration) && v.duration > 0); i++) await new Promise((r) => setTimeout(r, 20));
     v.currentTime = 0;
     await once(v, 'seeked');
   }
@@ -77,6 +85,7 @@
   async function loadFile(file) {
     if (state.job) return;
     showError('');
+    closeResult();
     if (state.url) URL.revokeObjectURL(state.url);
     state.file = file;
     state.url = URL.createObjectURL(file);
@@ -89,8 +98,8 @@
       });
       await fixDuration(v);
     } catch {
-      el.drop.hidden = false; el.editor.hidden = true;
-      alert('הדפדפן לא מצליח לפתוח את הקובץ הזה. נסו קובץ MP4 (H.264) או WebM.');
+      el.drop.hidden = false; el.editor.hidden = true; el.change.hidden = true;
+      alert('לא הצלחתי לפתוח את הסרטון הזה. נסו קובץ MP4 או WebM.');
       return;
     }
     v.onerror = null;
@@ -100,14 +109,14 @@
     state.end = Math.min(state.duration, 10);
     state.crop = null;
     setCropMode(false);
-    el.start.max = el.end.max = state.duration.toFixed(2);
     el.width.value = Math.min(480, state.vw);
     el.drop.hidden = true;
     el.editor.hidden = false;
+    el.change.hidden = false;
     renderTimeline(); renderCrop(); updateSummary();
   }
 
-  // ------------------------------------------------------------------ playback + timeline
+  // ------------------------------------------------------------------ ניגון וציר זמן
   const v = el.video;
   function togglePlay() {
     if (v.paused) {
@@ -120,7 +129,9 @@
   v.addEventListener('play', () => el.play.classList.add('playing'));
   v.addEventListener('pause', () => el.play.classList.remove('playing'));
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !el.editor.hidden && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement.tagName)) {
+    if (e.key === 'Escape' && !el.result.hidden) { closeResult(); return; }
+    if (e.code === 'Space' && !el.editor.hidden && el.result.hidden &&
+      !/INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY/.test(document.activeElement.tagName)) {
       e.preventDefault(); togglePlay();
     }
   });
@@ -129,7 +140,6 @@
     if (!el.editor.hidden && state.duration) {
       if (!v.paused && v.currentTime >= state.end) v.currentTime = state.start;
       el.tlHead.style.left = (v.currentTime / state.duration * 100) + '%';
-      el.timeNow.textContent = fmtTime(v.currentTime);
     }
     requestAnimationFrame(tick);
   })();
@@ -139,12 +149,13 @@
     const a = state.start / d * 100, b = state.end / d * 100;
     el.tlSel.style.left = a + '%'; el.tlSel.style.width = (b - a) + '%';
     el.hStart.style.left = a + '%'; el.hEnd.style.left = b + '%';
-    el.start.value = state.start.toFixed(2);
-    el.end.value = state.end.toFixed(2);
+    el.startText.textContent = fmtTime(state.start);
+    el.endText.textContent = fmtTime(state.end);
+    el.lenText.textContent = fmtSecs(state.end - state.start);
   }
 
   function setRange(start, end, seekTo) {
-    const minLen = 0.05;
+    const minLen = 0.1;
     state.start = clamp(start, 0, Math.max(0, state.duration - minLen));
     state.end = clamp(end, state.start + minLen, state.duration);
     renderTimeline(); updateSummary();
@@ -163,9 +174,9 @@
     el.timeline.setPointerCapture(e.pointerId);
     const move = (ev) => {
       const t = timeAt(ev);
-      if (what === 'start') setRange(Math.min(t, state.end - 0.05), state.end, t);
-      else if (what === 'end') setRange(state.start, Math.max(t, state.start + 0.05), t);
-      else { v.currentTime = t; }
+      if (what === 'start') setRange(Math.min(t, state.end - 0.1), state.end, t);
+      else if (what === 'end') setRange(state.start, Math.max(t, state.start + 0.1), t);
+      else v.currentTime = t;
     };
     move(e);
     const up = () => {
@@ -177,30 +188,34 @@
     el.timeline.addEventListener('pointerup', up);
     el.timeline.addEventListener('pointercancel', up);
   });
-  el.start.addEventListener('change', () => setRange(+el.start.value || 0, state.end, +el.start.value || 0));
-  el.end.addEventListener('change', () => setRange(state.start, +el.end.value || state.duration, +el.end.value));
-  el.setStart.addEventListener('click', () => setRange(v.currentTime, Math.max(state.end, v.currentTime + 0.05)));
-  el.setEnd.addEventListener('click', () => setRange(Math.min(state.start, v.currentTime - 0.05), v.currentTime));
+  el.setStart.addEventListener('click', () => setRange(v.currentTime, Math.max(state.end, v.currentTime + 0.1)));
+  el.setEnd.addEventListener('click', () => setRange(Math.min(state.start, v.currentTime - 0.1), v.currentTime));
 
-  // ------------------------------------------------------------------ crop
+  // ------------------------------------------------------------------ חיתוך תמונה
   function setCropMode(on) {
     state.cropMode = on;
     el.cropLayer.classList.toggle('active', on);
     el.cropBtn.setAttribute('aria-pressed', on);
-    el.cropBtn.textContent = on ? 'סיום חיתוך' : 'חיתוך תמונה';
+    el.cropBtnText.textContent = on ? 'סיימתי לחתוך' : 'חיתוך התמונה';
+    el.cropOpts.hidden = !on;
     if (on) v.pause();
+    renderCrop();
   }
   el.cropBtn.addEventListener('click', () => setCropMode(!state.cropMode));
   el.cropReset.addEventListener('click', () => { state.crop = null; renderCrop(); updateSummary(); });
-  el.aspect.addEventListener('change', () => {
-    const asp = +el.aspect.value;
+  el.aspect.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-a]');
+    if (!b) return;
+    state.aspect = +b.dataset.a;
+    el.aspect.querySelectorAll('[data-a]').forEach((x) => x.classList.toggle('on', x === b));
+    const asp = state.aspect;
     if (!asp) return;
-    // fit the largest centered box with that ratio inside the current crop (or whole frame)
+    // הריבוע הכי גדול באמצע, בצורה שנבחרה
     const base = state.crop || { x: 0, y: 0, w: state.vw, h: state.vh };
     let w = base.w, h = w / asp;
     if (h > base.h) { h = base.h; w = h * asp; }
     state.crop = normCrop({ x: base.x + (base.w - w) / 2, y: base.y + (base.h - h) / 2, w, h });
-    setCropMode(true); renderCrop(); updateSummary();
+    renderCrop(); updateSummary();
   });
 
   function normCrop(c) {
@@ -211,15 +226,14 @@
   function renderCrop() {
     const c = state.crop;
     el.cropBox.hidden = !c;
-    el.frame.classList.toggle('cropped', !!c);
     if (c) {
       Object.assign(el.cropBox.style, {
         left: c.x / state.vw * 100 + '%', top: c.y / state.vh * 100 + '%',
         width: c.w / state.vw * 100 + '%', height: c.h / state.vh * 100 + '%',
       });
-      el.cropInfo.textContent = `${c.w}×${c.h}`;
+      el.cropInfo.textContent = state.cropMode ? '' : 'התמונה חתוכה';
     } else {
-      el.cropInfo.textContent = state.cropMode ? 'גוררים על התמונה כדי לסמן' : '';
+      el.cropInfo.textContent = state.cropMode ? 'מסמנים בעכבר את החלק שרוצים להשאיר' : '';
     }
   }
 
@@ -232,11 +246,10 @@
   }
 
   function boxFrom(anchor, p) {
-    const asp = +el.aspect.value;
+    const asp = state.aspect;
     let w = Math.abs(p.x - anchor.x), h = Math.abs(p.y - anchor.y);
     const sx = p.x >= anchor.x ? 1 : -1, sy = p.y >= anchor.y ? 1 : -1;
     if (asp) { if (w / Math.max(h, 1e-6) > asp) w = h * asp; else h = w / asp; }
-    // keep inside the frame
     const maxW = sx > 0 ? state.vw - anchor.x : anchor.x, maxH = sy > 0 ? state.vh - anchor.y : anchor.y;
     if (w > maxW) { const k = maxW / w; w *= k; if (asp) h *= k; }
     if (h > maxH) { const k = maxH / h; h *= k; if (asp) w *= k; }
@@ -283,7 +296,7 @@
     el.cropLayer.addEventListener('pointercancel', up);
   });
 
-  // ------------------------------------------------------------------ settings
+  // ------------------------------------------------------------------ הגדרות
   function readSettings() {
     const crop = state.crop || { x: 0, y: 0, w: state.vw, h: state.vh };
     let width = Math.round(+el.width.value) || crop.w;
@@ -308,35 +321,44 @@
     el.fpsVal.textContent = s.fps;
     el.colorsVal.textContent = s.colors;
     el.strengthVal.textContent = el.strength.value + '%';
-    el.sizeVal.textContent = `${s.width}×${s.height}`;
     el.width.max = s.crop.w;
-    const outDur = s.total / s.fps;
-    el.summary.innerHTML =
-      `<span><b>${s.total}</b> פריימים</span><span><b>${outDur.toFixed(2)}</b> שנ'</span><span dir="ltr"><b>${s.width}×${s.height}</b></span>`;
-    const heavy = s.width * s.height * s.total > 2.5e8;
-    el.summary.classList.toggle('warn', heavy);
-    if (heavy) el.summary.innerHTML += '<em>הרבה פריימים בגודל הזה – ההמרה תיקח זמן והקובץ יהיה כבד</em>';
-    document.querySelectorAll('[data-w]').forEach((b) => {
+    el.origW.textContent = s.crop.w;
+
+    el.sizeSeg.querySelectorAll('[data-w]').forEach((b) => {
       const w = +b.dataset.w;
       b.classList.toggle('on', w ? w === s.width : s.width === s.crop.w);
-      b.disabled = !!w && w > s.crop.w;
+      b.disabled = !!w && w >= s.crop.w;
     });
+    el.fpsSeg.querySelectorAll('[data-fps]').forEach((b) => b.classList.toggle('on', +b.dataset.fps === s.fps));
     for (const [name, p] of Object.entries(PRESETS)) {
       const on = p.colors === s.colors && p.palette === s.palette && p.dither === s.dither &&
         p.strength === +el.strength.value && p.optimize === el.optimize.value;
-      document.querySelector(`[data-preset="${name}"]`).classList.toggle('on', on);
+      el.qualitySeg.querySelector(`[data-preset="${name}"]`).classList.toggle('on', on);
     }
+
+    const outDur = s.total / s.fps;
+    const heavy = s.width * s.height * s.total > 2.5e8;
+    el.summary.innerHTML = `יוצא GIF של <b>${fmtSecs(outDur)}</b>, בגודל <b dir="ltr">${s.width}×${s.height}</b>` +
+      (heavy ? '<em>קטע ארוך בגודל גדול – ייקח זמן והקובץ יהיה כבד. אפשר לקצר את הקטע או להקטין.</em>' : '');
+    el.summary.classList.toggle('warn', heavy);
   }
 
-  ['input', 'change'].forEach((ev) => document.querySelector('.panel').addEventListener(ev, updateSummary));
-  el.widthChips.addEventListener('click', (e) => {
+  document.querySelector('.panel').addEventListener('input', updateSummary);
+  document.querySelector('.panel').addEventListener('change', updateSummary);
+  el.sizeSeg.addEventListener('click', (e) => {
     const b = e.target.closest('[data-w]');
-    if (!b) return;
+    if (!b || b.disabled) return;
     const crop = state.crop || { w: state.vw };
     el.width.value = +b.dataset.w || crop.w;
     updateSummary();
   });
-  document.querySelector('.presets').addEventListener('click', (e) => {
+  el.fpsSeg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fps]');
+    if (!b) return;
+    el.fps.value = b.dataset.fps;
+    updateSummary();
+  });
+  el.qualitySeg.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preset]');
     if (!b) return;
     const p = PRESETS[b.dataset.preset];
@@ -345,7 +367,7 @@
     updateSummary();
   });
 
-  // ------------------------------------------------------------------ worker pool
+  // ------------------------------------------------------------------ מאגר עובדים
   let workerUrl = null;
   class Pool {
     constructor(size) {
@@ -370,7 +392,6 @@
       }
     }
     get size() { return this.workers.length; }
-    get busy() { return this.queue.length + this.waiting.size; }
     run(msg, transfer) {
       return new Promise((res, rej) => {
         msg.id = ++this.seq;
@@ -388,7 +409,7 @@
     terminate() { this.workers.forEach((w) => w.terminate()); }
   }
 
-  // ------------------------------------------------------------------ frame grabbing
+  // ------------------------------------------------------------------ לקיחת פריימים
   function seek(vid, t) {
     return new Promise((res, rej) => {
       if (Math.abs(vid.currentTime - t) < 1e-6 && vid.readyState >= 2) { res(); return; }
@@ -401,7 +422,7 @@
     });
   }
 
-  // High quality downscale: one smooth step (< 2x) at full resolution, then exact halvings.
+  // הקטנה איכותית: צעד חלק אחד (פחות מפי 2) ברזולוציה מלאה, ואז חציות מדויקות
   function makeGrabber(s) {
     const { crop, width: W, height: H } = s;
     let cw = W, ch = H;
@@ -432,11 +453,11 @@
     };
   }
 
-  // ------------------------------------------------------------------ conversion
+  // ------------------------------------------------------------------ המרה
   el.convert.addEventListener('click', () => convert().catch((err) => {
     if (err && err.message === 'cancel') return;
     console.error(err);
-    showError('ההמרה נכשלה: ' + (err && err.message || err));
+    showError('משהו השתבש בהמרה. נסו להקטין את הגודל או לקצר את הקטע.');
   }).finally(endJob));
   el.cancel.addEventListener('click', () => { if (state.job) state.job.cancelled = true; });
 
@@ -461,10 +482,10 @@
     const job = state.job = { cancelled: false };
     el.actions.hidden = true; el.progress.hidden = false;
     document.body.classList.add('busy');
-    setProgress(0, 'מכין…');
+    setProgress(0, 'מתכונן…');
     const t0 = performance.now();
 
-    // output timestamps in display order
+    // זמני הפריימים לפי סדר ההצגה
     const fwd = [];
     const maxT = state.duration - 0.001;
     for (let i = 0; i < s.count; i++) fwd.push(Math.min(maxT, state.start + i * s.step + 0.0005));
@@ -486,14 +507,15 @@
     const optimize = s.threshold >= 0;
     const global = s.palette === 'global';
     const last = optimize ? new Uint8ClampedArray(P * 4) : null;
-    const frames = []; // in display order
+    const frames = []; // לפי סדר ההצגה
     const jobs = [];
     let extracted = 0, encoded = 0, encodeTotal = 0;
     const tasks = [];
+    const inflight = new Set();
     const report = () => {
       const f = global ? (extracted / N) * 0.7 + (encodeTotal ? encoded / encodeTotal * 0.3 : 0)
         : (extracted + encoded) / (2 * N);
-      setProgress(f, extracted < N ? `מחלץ פריימים ${extracted}/${N} · קודדו ${encoded}` : `מקודד ${encoded}/${encodeTotal}`);
+      setProgress(f, `עובד… ${Math.round(clamp(f, 0, 1) * 100)}%`);
     };
     const common = { maxColors: s.colors, dither: s.dither, strength: s.strength };
 
@@ -510,7 +532,6 @@
       inflight.add(t);
       t.then(() => inflight.delete(t), () => inflight.delete(t));
     };
-    const inflight = new Set();
 
     for (let i = 0; i < N; i++) {
       if (job.cancelled) throw new Error('cancel');
@@ -518,12 +539,11 @@
       const img = grab(vid);
       extracted++;
 
-      let x0 = 0, y0 = 0, x1 = W - 1, y1 = H - 1, mask = null;
       if (optimize && frames.length) {
-        // pixels that did not change since they were last drawn become transparent
+        // פיקסלים שלא השתנו מאז שצוירו נשארים שקופים
         const T = s.threshold;
         const changed = new Uint8Array(P);
-        x0 = W; y0 = H; x1 = -1; y1 = -1;
+        let x0 = W, y0 = H, x1 = -1, y1 = -1;
         for (let y = 0, p = 0; y < H; y++) {
           for (let x = 0; x < W; x++, p++) {
             const o = p << 2;
@@ -535,7 +555,7 @@
             }
           }
         }
-        if (x1 < 0) { // identical frame: just extend the previous one
+        if (x1 < 0) { // פריים זהה: מאריכים את הקודם
           frames[frames.length - 1].delay += delayOf(i);
           report();
           continue;
@@ -556,10 +576,9 @@
             } else all = false;
           }
         }
-        mask = all ? null : m;
         const fr = { x: x0, y: y0, w, h, delay: delayOf(i) };
         frames.push(fr);
-        const jb = { rgba: sub, mask };
+        const jb = { rgba: sub, mask: all ? null : m };
         if (global) jobs.push([fr, jb]); else dispatch(fr, jb);
       } else {
         if (optimize) last.set(img);
@@ -569,7 +588,7 @@
         if (global) jobs.push([fr, jb]); else dispatch(fr, jb);
       }
       report();
-      // backpressure: keep memory bounded
+      // לא לתפוס יותר מדי זיכרון
       while (!global && inflight.size > pool.size * 3) {
         await Promise.race(inflight);
         if (job.cancelled) throw new Error('cancel');
@@ -578,8 +597,7 @@
 
     let globalTable = null, globalBits = 0;
     if (global) {
-      setProgress(0.7, 'בונה פלטת צבעים משותפת…');
-      // sample pixels from every frame (only pixels that are actually drawn)
+      setProgress(0.7, 'בונה צבעים…');
       let totalPx = 0;
       for (const [, jb] of jobs) totalPx += jb.mask ? jb.mask.reduce((a, b) => a + b, 0) : jb.rgba.length / 4;
       const stride = Math.max(1, Math.ceil(totalPx / 2e6));
@@ -607,7 +625,6 @@
       jobs.length = 0;
     }
 
-    // wait for all frames, checking for cancel
     const all = Promise.all(tasks);
     while (true) {
       const r = await Promise.race([all.then(() => 'done'), new Promise((res) => setTimeout(res, 200, 'tick'))]);
@@ -615,12 +632,13 @@
       if (r === 'done') break;
     }
 
-    setProgress(1, 'כותב קובץ…');
+    setProgress(1, 'כמעט מוכן…');
     const blob = assembleGif({ width: W, height: H, frames, globalTable, globalBits, loop: s.loop });
-    showResult(blob, s, frames.length, (performance.now() - t0) / 1000);
+    showResult(blob, s, (performance.now() - t0) / 1000);
   }
 
-  function showResult(blob, s, frameCount, secs) {
+  // ------------------------------------------------------------------ תוצאה
+  function showResult(blob, s, secs) {
     if (state.gifUrl) URL.revokeObjectURL(state.gifUrl);
     state.gifUrl = URL.createObjectURL(blob);
     el.gif.src = state.gifUrl;
@@ -629,16 +647,23 @@
     el.download.download = base + '.gif';
     const dur = s.total / s.fps;
     el.stats.innerHTML = [
-      ['גודל קובץ', fmtBytes(blob.size)],
-      ['מידות', `<span dir="ltr">${s.width}×${s.height}</span>`],
-      ['פריימים', `${frameCount}${frameCount < s.total ? ` <span class="muted">(מתוך ${s.total}, זהים אוחדו)</span>` : ''}`],
-      ['אורך', `${dur.toFixed(2)} שנ' · ${s.fps} fps`],
-      ['זמן המרה', `${secs.toFixed(1)} שנ'`],
-    ].map(([k, val]) => `<dt>${k}</dt><dd>${val}</dd>`).join('');
+      ['משקל', `<span dir="ltr">${fmtBytes(blob.size)}</span>`],
+      ['גודל', `<span dir="ltr">${s.width}×${s.height}</span>`],
+      ['אורך', fmtSecs(dur)],
+    ].map(([k, val]) => `<div><span>${k}</span><b>${val}</b></div>`).join('');
     el.result.hidden = false;
-    el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.body.classList.add('modal-open');
+    el.download.focus();
+    el.result.dataset.secs = secs.toFixed(1);
   }
+  function closeResult() {
+    el.result.hidden = true;
+    document.body.classList.remove('modal-open');
+  }
+  el.closeResult.addEventListener('click', closeResult);
+  el.again.addEventListener('click', closeResult);
+  el.result.addEventListener('click', (e) => { if (e.target === el.result) closeResult(); });
 
-  // for automated tests
+  // לבדיקות אוטומטיות
   window.GifX = { loadFile, convert: () => convert().finally(endJob), state, readSettings };
 })();
